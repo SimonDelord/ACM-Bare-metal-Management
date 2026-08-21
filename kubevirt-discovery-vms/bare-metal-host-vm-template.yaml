@@ -1,0 +1,130 @@
+# OpenShift Virtualization catalog template for VMs on the Layer-2 primary UDN.
+# Create VMs in project bare-metal-hosts (not default).
+#
+#   oc apply -n bare-metal-hosts -f kubevirt-discovery-vms/bare-metal-host-vm-template.yaml
+#   oc apply -n openshift -f kubevirt-discovery-vms/bare-metal-host-vm-template.yaml
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: bare-metal-host-vm
+  labels:
+    flavor.template.kubevirt.io/2xlarge: "true"
+    os.template.kubevirt.io/rhel9: "true"
+    template.kubevirt.io/architecture: amd64
+    template.kubevirt.io/type: vm
+    workload.template.kubevirt.io/server: "true"
+  annotations:
+    defaults.template.kubevirt.io/disk: rootdisk
+    description: >
+      CIM discovery VM on the Layer-2 primary UDN in project bare-metal-hosts.
+      Clones boot-volume-amd64. Disk must be 100Gi. Interface uses l2bridge (not masquerade).
+    iconClass: icon-rhel
+    name.os.template.kubevirt.io/rhel9: Red Hat Enterprise Linux 9
+    openshift.io/display-name: CIM discovery host (L2 UDN)
+    openshift.io/documentation-url: https://github.com/SimonDelord/ACM-Bare-metal-Management
+    openshift.io/provider-display-name: ACM lab
+    tags: kubevirt,virtualmachine,linux,rhel,cim,udn
+    template.kubevirt.io/editable: |
+      /objects[0].spec.dataVolumeTemplates[0].spec.storage.resources.requests.storage
+    template.kubevirt.io/provider: ACM lab
+    template.kubevirt.io/provider-support-level: Community
+    template.openshift.io/bindable: "false"
+message: |
+  Created VirtualMachine ${NAME} on primary UDN udn-l2-primary (l2bridge).
+  Create this in project bare-metal-hosts. Disk ${DISK_SIZE} must be >= source PVC.
+objects:
+  - apiVersion: kubevirt.io/v1
+    kind: VirtualMachine
+    metadata:
+      name: ${NAME}
+      labels:
+        app: ${NAME}
+        cim.example.com/role: discovery-vm
+        vm.kubevirt.io/template: bare-metal-host-vm
+    spec:
+      runStrategy: Always
+      instancetype:
+        name: ${INSTANCETYPE}
+      preference:
+        kind: VirtualMachineClusterPreference
+        name: ${PREFERENCE}
+      dataVolumeTemplates:
+        - metadata:
+            name: ${NAME}-volume
+          spec:
+            sourceRef:
+              kind: DataSource
+              name: ${DATA_SOURCE_NAME}
+              namespace: ${DATA_SOURCE_NAMESPACE}
+            storage:
+              storageClassName: ${STORAGE_CLASS}
+              resources:
+                requests:
+                  storage: ${DISK_SIZE}
+      template:
+        metadata:
+          labels:
+            kubevirt.io/domain: ${NAME}
+        spec:
+          architecture: amd64
+          domain:
+            devices:
+              disks:
+                - name: rootdisk
+                  bootOrder: 1
+                  disk:
+                    bus: virtio
+                - name: cloudinitdisk
+                  disk:
+                    bus: virtio
+              interfaces:
+                - name: default
+                  binding:
+                    name: l2bridge
+          networks:
+            - name: default
+              pod: {}
+          volumes:
+            - name: rootdisk
+              dataVolume:
+                name: ${NAME}-volume
+            - name: cloudinitdisk
+              cloudInitNoCloud:
+                userData: |
+                  #cloud-config
+                  user: ${CLOUD_USER}
+                  chpasswd:
+                    expire: false
+                  password: ${CLOUD_USER_PASSWORD}
+parameters:
+  - name: NAME
+    displayName: VirtualMachine name
+    description: VM name
+    required: true
+  - name: DATA_SOURCE_NAME
+    displayName: Boot DataSource
+    description: Must already be Succeeded. boot-volume-amd64 and boot-volume-new-amd64 are 100Gi.
+    value: boot-volume-amd64
+  - name: DATA_SOURCE_NAMESPACE
+    displayName: DataSource namespace
+    value: default
+  - name: DISK_SIZE
+    displayName: Disk size (must be >= DataSource PVC)
+    value: 100Gi
+  - name: STORAGE_CLASS
+    displayName: StorageClass
+    value: gp3-csi
+  - name: INSTANCETYPE
+    displayName: Instancetype (needs /dev/kvm, e.g. metal worker)
+    value: u1.2xlarge
+  - name: PREFERENCE
+    displayName: Preference
+    value: rhel.9
+  - name: CLOUD_USER
+    displayName: cloud-init user
+    value: rhel
+  - name: CLOUD_USER_PASSWORD
+    displayName: cloud-init password
+    generate: expression
+    from: "[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}"
+    required: true

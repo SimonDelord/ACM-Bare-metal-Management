@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bare-metal-hosts
+  labels:
+    k8s.ovn.org/primary-user-defined-network: ""
+    kubernetes.io/metadata.name: bare-metal-hosts
+---
+# Layer-2 primary UDN for this namespace only.
+# Subnet must not overlap machineNetwork 10.0.0.0/16, clusterNetwork 10.128.0.0/14,
+# or serviceNetwork 172.30.0.0/16.
+apiVersion: k8s.ovn.org/v1
+kind: UserDefinedNetwork
+metadata:
+  name: udn-l2-primary
+  namespace: bare-metal-hosts
+spec:
+  topology: Layer2
+  layer2:
+    role: Primary
+    subnets:
+      - 192.168.200.0/24
+    ipam:
+      lifecycle: Persistent
