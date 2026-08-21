@@ -1,7 +1,8 @@
 # DNS forwarder on the fake-bare-metal UDN.
 # Spoke masters look up quay.io via cluster DNS 172.30.0.10 before CoreDNS exists.
-# This pod owns 192.168.200.53 and forwards UDP/TCP 5353 to 8.8.8.8.
-# Pair with a Service+Endpoints on the *spoke* (clusterIP 172.30.0.10 -> .53:5353).
+# This pod owns 192.168.200.54 and forwards UDP/TCP 5353 to 8.8.8.8.
+# AAAA queries get an empty NOERROR so kubelet does not try IPv6 to quay.io.
+# Pair with a Service+Endpoints on the *spoke* (clusterIP 172.30.0.10 -> .54:5353).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -15,6 +16,36 @@ data:
 
     LISTEN = 5353
     UPSTREAM = ("8.8.8.8", 53)
+    TYPE_AAAA = 28
+
+    def qtype(data):
+        i = 12
+        while i < len(data):
+            length = data[i]
+            if length == 0:
+                i += 1
+                break
+            if length & 0xC0 == 0xC0:
+                i += 2
+                break
+            i += 1 + length
+        if i + 2 > len(data):
+            return None
+        return int.from_bytes(data[i:i + 2], "big")
+
+    def nodata(query):
+        # NOERROR empty answer so kubelet falls back to A instead of IPv6.
+        qend = 12
+        while qend < len(query):
+            length = query[qend]
+            if length == 0:
+                qend += 5
+                break
+            if length & 0xC0 == 0xC0:
+                qend += 6
+                break
+            qend += 1 + length
+        return query[:2] + b"\x81\x80" + b"\x00\x01\x00\x00\x00\x00\x00\x00" + query[12:qend]
 
     def udp():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -22,6 +53,9 @@ data:
         while True:
             data, addr = sock.recvfrom(4096)
             try:
+                if qtype(data) == TYPE_AAAA:
+                    sock.sendto(nodata(data), addr)
+                    continue
                 up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 up.settimeout(3)
                 up.sendto(data, UPSTREAM)
@@ -47,6 +81,10 @@ data:
                 if not chunk:
                     return
                 q += chunk
+            if qtype(q) == TYPE_AAAA:
+                r = nodata(q)
+                client.sendall(len(r).to_bytes(2, "big") + r)
+                return
             up = socket.create_connection(UPSTREAM, timeout=3)
             up.sendall(len(q).to_bytes(2, "big") + q)
             rh = up.recv(2)
@@ -98,7 +136,7 @@ spec:
         app: udn-dns-forwarder
       annotations:
         v1.multus-cni.io/default-network: |
-          [{"name":"default","namespace":"openshift-ovn-kubernetes","ips":["192.168.200.53/24"]}]
+          [{"name":"default","namespace":"openshift-ovn-kubernetes","ips":["192.168.200.54/24"]}]
     spec:
       containers:
         - name: forwarder

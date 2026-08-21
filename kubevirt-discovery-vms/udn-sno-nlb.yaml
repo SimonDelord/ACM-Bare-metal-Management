@@ -1,0 +1,80 @@
+# Hub-side TCP proxy + AWS NLB for the SNO (aws-sno).
+# API and apps are on the node IP 192.168.200.44 (user-managed networking, no keepalived VIP).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udn-sno-proxy
+  namespace: bare-metal-hosts
+  labels:
+    app: udn-sno-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udn-sno-proxy
+  template:
+    metadata:
+      labels:
+        app: udn-sno-proxy
+      annotations:
+        k8s.ovn.org/open-default-ports: |
+          [{"protocol":"tcp","port":8080},{"protocol":"tcp","port":8443},{"protocol":"tcp","port":16443}]
+    spec:
+      containers:
+        - name: proxy
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          command: ["python3", "/proxy/proxy.py"]
+          env:
+            - name: FORWARD
+              value: "8080:192.168.200.44:80,8443:192.168.200.44:443,16443:192.168.200.44:6443"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+            - name: api
+              containerPort: 16443
+          volumeMounts:
+            - name: proxy
+              mountPath: /proxy
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: proxy
+          configMap:
+            name: udn-tcp-proxy
+            defaultMode: 0555
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-sno
+  namespace: bare-metal-hosts
+  labels:
+    app: udn-sno-proxy
+    spoke: aws-sno
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+spec:
+  type: LoadBalancer
+  selector:
+    app: udn-sno-proxy
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 8443
+      protocol: TCP
+    - name: api
+      port: 6443
+      targetPort: 16443
+      protocol: TCP
