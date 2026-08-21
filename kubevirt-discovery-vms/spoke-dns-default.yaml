@@ -1,0 +1,40 @@
+# Applied on the *spoke* cluster (not the hub).
+# kubelet uses 172.30.0.10 before OpenShift DNS exists; send those queries
+# to the UDN DNS forwarder at 192.168.200.53:5353 (and bootstrap .12 as backup).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-dns
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dns-default
+  namespace: openshift-dns
+spec:
+  clusterIP: 172.30.0.10
+  ports:
+    - name: dns
+      port: 53
+      protocol: UDP
+      targetPort: 5353
+    - name: dns-tcp
+      port: 53
+      protocol: TCP
+      targetPort: 5353
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: dns-default
+  namespace: openshift-dns
+subsets:
+  - addresses:
+      - ip: 192.168.200.53
+    ports:
+      - name: dns
+        port: 5353
+        protocol: UDP
+      - name: dns-tcp
+        port: 5353
+        protocol: TCP

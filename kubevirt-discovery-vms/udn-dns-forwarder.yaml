@@ -1,0 +1,129 @@
+# DNS forwarder on the fake-bare-metal UDN.
+# Spoke masters look up quay.io via cluster DNS 172.30.0.10 before CoreDNS exists.
+# This pod owns 192.168.200.53 and forwards UDP/TCP 5353 to 8.8.8.8.
+# Pair with a Service+Endpoints on the *spoke* (clusterIP 172.30.0.10 -> .53:5353).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udn-dns-forwarder
+  namespace: bare-metal-hosts
+data:
+  forwarder.py: |
+    #!/usr/bin/env python3
+    import socket
+    import threading
+
+    LISTEN = 5353
+    UPSTREAM = ("8.8.8.8", 53)
+
+    def udp():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("0.0.0.0", LISTEN))
+        while True:
+            data, addr = sock.recvfrom(4096)
+            try:
+                up = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                up.settimeout(3)
+                up.sendto(data, UPSTREAM)
+                resp, _ = up.recvfrom(4096)
+                sock.sendto(resp, addr)
+            except OSError:
+                pass
+            finally:
+                try:
+                    up.close()
+                except Exception:
+                    pass
+
+    def handle_tcp(client):
+        try:
+            hdr = client.recv(2)
+            if len(hdr) < 2:
+                return
+            n = int.from_bytes(hdr, "big")
+            q = b""
+            while len(q) < n:
+                chunk = client.recv(n - len(q))
+                if not chunk:
+                    return
+                q += chunk
+            up = socket.create_connection(UPSTREAM, timeout=3)
+            up.sendall(len(q).to_bytes(2, "big") + q)
+            rh = up.recv(2)
+            if len(rh) < 2:
+                return
+            rn = int.from_bytes(rh, "big")
+            r = b""
+            while len(r) < rn:
+                chunk = up.recv(rn - len(r))
+                if not chunk:
+                    return
+                r += chunk
+            client.sendall(len(r).to_bytes(2, "big") + r)
+        except OSError:
+            pass
+        finally:
+            try:
+                client.close()
+            except OSError:
+                pass
+
+    def tcp():
+        sock = socket.socket()
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", LISTEN))
+        sock.listen(32)
+        while True:
+            c, _ = sock.accept()
+            threading.Thread(target=handle_tcp, args=(c,), daemon=True).start()
+
+    threading.Thread(target=udp, daemon=True).start()
+    tcp()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: udn-dns-forwarder
+  namespace: bare-metal-hosts
+  labels:
+    app: udn-dns-forwarder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: udn-dns-forwarder
+  template:
+    metadata:
+      labels:
+        app: udn-dns-forwarder
+      annotations:
+        v1.multus-cni.io/default-network: |
+          [{"name":"default","namespace":"openshift-ovn-kubernetes","ips":["192.168.200.53/24"]}]
+    spec:
+      containers:
+        - name: forwarder
+          image: registry.access.redhat.com/ubi9/python-311:latest
+          command: ["python3", "/forwarder/forwarder.py"]
+          ports:
+            - name: dns-udp
+              containerPort: 5353
+              protocol: UDP
+            - name: dns-tcp
+              containerPort: 5353
+              protocol: TCP
+          volumeMounts:
+            - name: script
+              mountPath: /forwarder
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: script
+          configMap:
+            name: udn-dns-forwarder
+            defaultMode: 0555

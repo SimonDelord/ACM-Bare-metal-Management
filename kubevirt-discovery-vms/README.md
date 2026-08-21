@@ -16,6 +16,8 @@ Do not use the ISO as the only disk. That is what caused `found busy partitions`
 | `discovery-iso.yaml` | Import the ISO once (10Gi) |
 | `bare-metal-host-vm-template.yaml` | VM template |
 | `apply-api-vip-ovn-lb.sh` | Make `192.168.200.200` reachable on the UDN |
+| `udn-dns-forwarder.yaml` | DNS forwarder on `192.168.200.53` (for spoke image pulls) |
+| `spoke-dns-default.yaml` | Spoke Service `172.30.0.10` → that forwarder |
 
 ## Setup (once)
 
@@ -57,3 +59,18 @@ What works is an OVN load balancer on the UDN switch that forwards `.200:6443` t
 ```
 
 If ovn-kubernetes drops the load balancers, re-run the script. Update `BACKEND` in the script if the bootstrap VM is not `.12`. After all three masters serve kube-apiserver, set `BACKEND` to `.10,.11,.12` and re-run.
+
+## Spoke image pulls (cluster DNS)
+
+After the masters join, kubelet looks up `quay.io` via cluster DNS `172.30.0.10`. OpenShift DNS is not up yet, so pulls fail (`lookup quay.io on 172.30.0.10:53: i/o timeout`).
+
+Workaround: a DNS forwarder on the UDN (`192.168.200.53`) that sends queries to `8.8.8.8`, plus a temporary Service on the **spoke** that makes `172.30.0.10` point at that forwarder.
+
+```bash
+oc apply -f kubevirt-discovery-vms/udn-dns-forwarder.yaml
+
+# from a pod on the UDN, against the spoke API:
+oc --server https://192.168.200.200:6443 apply -f kubevirt-discovery-vms/spoke-dns-default.yaml
+```
+
+The dns-operator can replace `dns-default` later. Keep `udn-dns-forwarder` until that happens.
