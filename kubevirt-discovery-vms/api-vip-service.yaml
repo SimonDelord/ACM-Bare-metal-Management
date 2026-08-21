@@ -1,0 +1,44 @@
+# Kubernetes Service in the UDN namespace for the spoke API VIP.
+#
+# spec.clusterIP cannot be 192.168.200.200 (serviceNetwork is 172.30.0.0/16).
+# spec.externalIPs: ["192.168.200.200"] is programmed onto the UDN switch but
+# OVN leaves the backends empty and rejects connections — do not set it.
+#
+# Reachability of 192.168.200.200:6443 is provided by OVN load balancers
+# (see apply-api-vip-ovn-lb.sh) that DNAT to the bootstrap VM 192.168.200.12.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-vip
+  namespace: bare-metal-hosts
+  labels:
+    app: api-vip
+spec:
+  type: ClusterIP
+  ports:
+    - name: kube-apiserver
+      port: 6443
+      targetPort: 6443
+      protocol: TCP
+    - name: machine-config
+      port: 22623
+      targetPort: 22623
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: api-vip
+  namespace: bare-metal-hosts
+  labels:
+    app: api-vip
+subsets:
+  - addresses:
+      - ip: 192.168.200.12
+    ports:
+      - name: kube-apiserver
+        port: 6443
+        protocol: TCP
+      - name: machine-config
+        port: 22623
+        protocol: TCP
