@@ -14,18 +14,6 @@ Primary reference: [Host inventory / CIM (ACM 2.17)](https://docs.redhat.com/en/
 
 ---
 
-## Why not ARO or ROSA?
-
-We first tried this on **ARO** and **ROSA**. Those hubs are a poor fit for CIM:
-
-- No real Metal3 / `BareMetalHost` stack
-- `Provisioning` and `AgentServiceConfig` often crash-loop (assisted-service, metal3, infrastructure-operator)
-- Managed platforms do not behave like a bare-metal, vSphere, or self-managed IPI hub
-
-CIM needs a hub you fully control, a default StorageClass, and the ability to run Assisted Installer + (on AWS) a dedicated **NLB** for ISO downloads. **Self-managed IPI** is the right starting point.
-
----
-
 ## What CIM does
 
 1. You enable the Assisted Installer stack on the hub (`AgentServiceConfig`).
