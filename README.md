@@ -330,27 +330,16 @@ Only the **Discovery ISO download** path needs the NLB.
 
 ---
 
-## 7. KubeVirt VMs as fake bare-metal hosts (avoid Provisioning stuck)
+## 7. KubeVirt VMs as fake bare-metal hosts
 
-The console “import from URL” path is what put VMs in `DataVolumeError` / `Provisioning`. CDI does not trust the NLB ingress cert, and a clone disk **smaller than the source PVC** is rejected before a PVC is created.
+YAML and GUI steps: [`kubevirt-discovery-vms/`](kubevirt-discovery-vms/).
 
-**Import the ISO once. Clone it for every VM.** Ready DataSources in this lab: `boot-volume-amd64` and `boot-volume-new-amd64` (**100Gi**). `fedora-volume-amd64` is **30Gi**.
-
-### Rules
-
-| Do | Do not |
-| --- | --- |
-| Clone from a `Succeeded` DataSource | HTTP-import the ISO on every new VM |
-| Disk size **≥** source PVC (`100Gi` for `boot-volume-*`) | `30Gi` clone from a `100Gi` boot PVC |
-| In-cluster URL `https://assisted-image-service.multicluster-engine.svc:8080/...` plus ConfigMap `assisted-image-service-ca` | Public `*.nlb-apps.*` URL in a DataVolume (CDI TLS fail) |
-
-Discovery VMs run in project **`bare-metal-hosts`** on a **Layer-2 primary UDN** (`udn-l2-primary`, subnet `192.168.200.0/24`, NIC **l2bridge**). YAML and GUI steps: [`kubevirt-discovery-vms/`](kubevirt-discovery-vms/).
+VMs run in project **`bare-metal-hosts`** on a **Layer-2 primary UDN** (`udn-l2-primary`, `192.168.200.0/24`, NIC **l2bridge**). Each VM boots the Discovery ISO as a **CD-ROM** (DataSource `discovery-iso`, 10Gi) and has a separate empty **100Gi** virtio disk for `coreos-installer`. Using the ISO as `/dev/vda` makes ACM fail with `found busy partitions`.
 
 ```bash
 oc apply -f kubevirt-discovery-vms/namespace-udn.yaml
 oc apply -f kubevirt-discovery-vms/cdi-clone-rbac.yaml
+oc apply -n bare-metal-hosts -f kubevirt-discovery-vms/bare-metal-host-vm-template.yaml
 ```
 
-Console: project **bare-metal-hosts** → **Virtualization** → **Catalog** → **CIM discovery host (L2 UDN)**, disk **100Gi**, DataSource **boot-volume-amd64**. Do not create these VMs in `default`.
-
-Do not commit the `byapikey` token. NUCs still download from `*.nlb-apps.*` with `wget --no-check-certificate`.
+Console: project **bare-metal-hosts** → **Virtualization** → **Catalog** → **CIM discovery host (L2 UDN)**. Do not create these VMs in `default`. Do not commit the `byapikey` token.

@@ -1,8 +1,10 @@
-# OpenShift Virtualization catalog template for VMs on the Layer-2 primary UDN.
-# Create VMs in project bare-metal-hosts (not default).
+# OpenShift Virtualization catalog template for CIM discovery VMs on the L2 primary UDN.
+#
+# The Discovery ISO must be a CD-ROM. coreos-installer writes RHCOS to the empty
+# virtio disk (/dev/vda). If the ISO is the only disk, install fails with
+# "found busy partitions" on /dev/vda.
 #
 #   oc apply -n bare-metal-hosts -f kubevirt-discovery-vms/bare-metal-host-vm-template.yaml
-#   oc apply -n openshift -f kubevirt-discovery-vms/bare-metal-host-vm-template.yaml
 apiVersion: template.openshift.io/v1
 kind: Template
 metadata:
@@ -14,24 +16,22 @@ metadata:
     template.kubevirt.io/type: vm
     workload.template.kubevirt.io/server: "true"
   annotations:
-    defaults.template.kubevirt.io/disk: rootdisk
+    defaults.template.kubevirt.io/disk: harddrive
     description: >
-      CIM discovery VM on the Layer-2 primary UDN in project bare-metal-hosts.
-      Clones boot-volume-amd64. Disk must be 100Gi. Interface uses l2bridge (not masquerade).
+      CIM discovery VM on the Layer-2 primary UDN. Boots the Discovery ISO as a
+      CD-ROM and installs to an empty 100Gi disk. Do not use the ISO as the only disk.
     iconClass: icon-rhel
     name.os.template.kubevirt.io/rhel9: Red Hat Enterprise Linux 9
     openshift.io/display-name: CIM discovery host (L2 UDN)
     openshift.io/documentation-url: https://github.com/SimonDelord/ACM-Bare-metal-Management
     openshift.io/provider-display-name: ACM lab
     tags: kubevirt,virtualmachine,linux,rhel,cim,udn
-    template.kubevirt.io/editable: |
-      /objects[0].spec.dataVolumeTemplates[0].spec.storage.resources.requests.storage
     template.kubevirt.io/provider: ACM lab
     template.kubevirt.io/provider-support-level: Community
     template.openshift.io/bindable: "false"
 message: |
-  Created VirtualMachine ${NAME} on primary UDN udn-l2-primary (l2bridge).
-  Create this in project bare-metal-hosts. Disk ${DISK_SIZE} must be >= source PVC.
+  Created ${NAME} in the UDN project. It boots discovery-iso as CD-ROM and
+  installs to ${DISK_SIZE} empty disk /dev/vda. Recreate ACM agents after this VM is up.
 objects:
   - apiVersion: kubevirt.io/v1
     kind: VirtualMachine
@@ -50,17 +50,33 @@ objects:
         name: ${PREFERENCE}
       dataVolumeTemplates:
         - metadata:
-            name: ${NAME}-volume
+            name: ${NAME}-disk
           spec:
-            sourceRef:
-              kind: DataSource
-              name: ${DATA_SOURCE_NAME}
-              namespace: ${DATA_SOURCE_NAMESPACE}
+            source:
+              blank: {}
             storage:
+              accessModes:
+                - ReadWriteOnce
               storageClassName: ${STORAGE_CLASS}
+              volumeMode: Block
               resources:
                 requests:
                   storage: ${DISK_SIZE}
+        - metadata:
+            name: ${NAME}-iso
+          spec:
+            sourceRef:
+              kind: DataSource
+              name: ${ISO_DATA_SOURCE}
+              namespace: ${ISO_DATA_SOURCE_NAMESPACE}
+            storage:
+              accessModes:
+                - ReadWriteOnce
+              storageClassName: ${STORAGE_CLASS}
+              volumeMode: Block
+              resources:
+                requests:
+                  storage: ${ISO_SIZE}
       template:
         metadata:
           labels:
@@ -70,13 +86,14 @@ objects:
           domain:
             devices:
               disks:
-                - name: rootdisk
+                - name: harddrive
+                  disk:
+                    bus: virtio
+                  bootOrder: 2
+                - name: iso
+                  cdrom:
+                    bus: sata
                   bootOrder: 1
-                  disk:
-                    bus: virtio
-                - name: cloudinitdisk
-                  disk:
-                    bus: virtio
               interfaces:
                 - name: default
                   binding:
@@ -85,46 +102,31 @@ objects:
             - name: default
               pod: {}
           volumes:
-            - name: rootdisk
+            - name: harddrive
               dataVolume:
-                name: ${NAME}-volume
-            - name: cloudinitdisk
-              cloudInitNoCloud:
-                userData: |
-                  #cloud-config
-                  user: ${CLOUD_USER}
-                  chpasswd:
-                    expire: false
-                  password: ${CLOUD_USER_PASSWORD}
+                name: ${NAME}-disk
+            - name: iso
+              dataVolume:
+                name: ${NAME}-iso
 parameters:
   - name: NAME
     displayName: VirtualMachine name
-    description: VM name
     required: true
-  - name: DATA_SOURCE_NAME
-    displayName: Boot DataSource
-    description: Must already be Succeeded. boot-volume-amd64 and boot-volume-new-amd64 are 100Gi.
-    value: boot-volume-amd64
-  - name: DATA_SOURCE_NAMESPACE
-    displayName: DataSource namespace
+  - name: ISO_DATA_SOURCE
+    displayName: Discovery ISO DataSource (CD-ROM clone)
+    value: discovery-iso
+  - name: ISO_DATA_SOURCE_NAMESPACE
     value: default
+  - name: ISO_SIZE
+    displayName: ISO clone size (must be >= DataSource PVC)
+    value: 10Gi
   - name: DISK_SIZE
-    displayName: Disk size (must be >= DataSource PVC)
+    displayName: Empty install disk size
     value: 100Gi
   - name: STORAGE_CLASS
-    displayName: StorageClass
     value: gp3-csi
   - name: INSTANCETYPE
-    displayName: Instancetype (needs /dev/kvm, e.g. metal worker)
+    displayName: Instancetype (needs /dev/kvm)
     value: u1.2xlarge
   - name: PREFERENCE
-    displayName: Preference
     value: rhel.9
-  - name: CLOUD_USER
-    displayName: cloud-init user
-    value: rhel
-  - name: CLOUD_USER_PASSWORD
-    displayName: cloud-init password
-    generate: expression
-    from: "[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}"
-    required: true

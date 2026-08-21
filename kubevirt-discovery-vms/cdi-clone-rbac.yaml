@@ -1,4 +1,4 @@
-# Allow VMs in bare-metal-hosts to clone DataVolumes from default (boot-volume-amd64).
+# Allow VMs in bare-metal-hosts to clone DataVolumes from default (discovery-iso).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

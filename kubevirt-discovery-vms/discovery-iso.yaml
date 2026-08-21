@@ -1,0 +1,70 @@
+# One-time import of the Discovery ISO as a small CD-ROM image.
+# Clone this into each VM as a SATA CD-ROM. Do not use it as the VM's only disk.
+#
+# Prerequisites:
+#   oc get cm assisted-image-service-ca -n default
+# If missing:
+#   oc get cm openshift-service-ca.crt -n default -o jsonpath='{.data.service-ca\.crt}' > /tmp/service-ca.crt
+#   oc create configmap assisted-image-service-ca -n default \
+#     --from-file=ca.crt=/tmp/service-ca.crt --from-file=tls.crt=/tmp/service-ca.crt
+#
+# URL must be in-cluster (.svc:8080), not *.nlb-apps.*:
+#   oc process -f kubevirt-discovery-vms/discovery-iso.yaml \
+#     ISO_URL='https://assisted-image-service.multicluster-engine.svc:8080/byapikey/<token>/4.22/x86_64/full.iso' \
+#     | oc apply -f -
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: discovery-iso
+  annotations:
+    description: One-time 10Gi CDI import of the CIM Discovery ISO for use as a CD-ROM.
+    openshift.io/display-name: CIM Discovery ISO (CD-ROM DataVolume)
+objects:
+  - apiVersion: cdi.kubevirt.io/v1beta1
+    kind: DataVolume
+    metadata:
+      name: discovery-iso
+      namespace: ${NAMESPACE}
+      labels:
+        template.kubevirt.io/architecture: amd64
+      annotations:
+        cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+        openshift.io/display-name: CIM Discovery ISO (CD-ROM)
+    spec:
+      source:
+        http:
+          url: ${ISO_URL}
+          certConfigMap: assisted-image-service-ca
+      storage:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: ${STORAGE_CLASS}
+        volumeMode: Block
+        resources:
+          requests:
+            storage: ${ISO_SIZE}
+  - apiVersion: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    metadata:
+      name: discovery-iso
+      namespace: ${NAMESPACE}
+      labels:
+        template.kubevirt.io/architecture: amd64
+      annotations:
+        openshift.io/display-name: CIM Discovery ISO (CD-ROM)
+    spec:
+      source:
+        pvc:
+          name: discovery-iso
+          namespace: ${NAMESPACE}
+parameters:
+  - name: NAMESPACE
+    value: default
+  - name: ISO_URL
+    displayName: In-cluster HTTPS ISO URL (.svc:8080, not nlb-apps)
+    required: true
+  - name: ISO_SIZE
+    displayName: PVC size (ISO is ~1.4GiB; 10Gi is enough for CD-ROM clones)
+    value: 10Gi
+  - name: STORAGE_CLASS
+    value: gp3-csi
