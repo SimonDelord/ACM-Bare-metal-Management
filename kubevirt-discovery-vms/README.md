@@ -15,7 +15,6 @@ Do not use the ISO as the only disk. That is what caused `found busy partitions`
 | `cdi-clone-rbac.yaml` | Allow cloning the ISO from `default` |
 | `discovery-iso.yaml` | Import the ISO once (10Gi) |
 | `bare-metal-host-vm-template.yaml` | VM template |
-| `api-vip-service.yaml` | Service + Endpoints aimed at the bootstrap API |
 | `apply-api-vip-ovn-lb.sh` | Make `192.168.200.200` reachable on the UDN |
 
 ## Setup (once)
@@ -49,13 +48,12 @@ When the VM is Running, it shows up as an ACM Agent. After a successful install,
 
 ACM's BareMetal install puts keepalived's API VIP on a guest (`192.168.200.200`). Other masters must reach that address. OVN only knows each VM's real IP (`.10`, `.11`, `.12`), so packets to `.200` used to fail with "no route to host".
 
-A Kubernetes Service cannot *be* `.200`. ClusterIPs come from `172.30.0.0/16`. Setting `externalIPs: [192.168.200.200]` looks right, but OVN programs that VIP with empty backends and the connection is refused.
+There is no Kubernetes YAML that can own `.200` on this UDN. ClusterIPs come from `172.30.0.0/16`, and a Service `externalIP` of `.200` is programmed with empty backends (connection refused).
 
-What works: an OVN load balancer on the UDN switch that forwards `.200:6443` to the bootstrap VM (`192.168.200.12`).
+What works is an OVN load balancer on the UDN switch that forwards `.200:6443` to the bootstrap VM (`192.168.200.12`):
 
 ```bash
-oc apply -f kubevirt-discovery-vms/api-vip-service.yaml
 ./kubevirt-discovery-vms/apply-api-vip-ovn-lb.sh
 ```
 
-Do not add `externalIPs` on `api-vip`. If ovn-kubernetes drops the load balancers, re-run the script. Update `BACKEND` in the script if the bootstrap VM is not `.12`.
+If ovn-kubernetes drops the load balancers, re-run the script. Update `BACKEND` in the script if the bootstrap VM is not `.12`. After all three masters serve kube-apiserver, set `BACKEND` to `.10,.11,.12` and re-run.

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Program OVN load balancers on the primary UDN so 192.168.200.200:{6443,22623}
-# DNAT to the bootstrap VM (192.168.200.12). A Kubernetes Service cannot own
-# 192.168.200.200 (not in serviceNetwork), and Service externalIPs on this UDN
-# are programmed with empty backends (connection refused).
+# DNAT to the bootstrap VM (192.168.200.12). There is no Kubernetes YAML for
+# this: a Service cannot own 192.168.200.200, and externalIPs on this UDN are
+# programmed with empty backends (connection refused).
 set -euo pipefail
 
 SWITCH=bare.metal.hosts_udn.l2.primary_ovn_layer2_switch
