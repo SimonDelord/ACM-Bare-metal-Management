@@ -15,7 +15,7 @@ Do not use the ISO as the only disk. That is what caused `found busy partitions`
 | `cdi-clone-rbac.yaml` | Allow cloning the ISO from `default` |
 | `discovery-iso.yaml` | Import the ISO once (10Gi) |
 | `bare-metal-host-vm-template.yaml` | VM template |
-| `apply-api-vip-ovn-lb.sh` | OVN LBs for API/MCS `.200` and ingress `.201` |
+| `apply-api-vip-ovn-lb.sh` | OVN LBs for API/MCS `.200` (`6443`/`22623`/`22624`) and ingress `.201` |
 | `udn-dns-forwarder.yaml` | DNS forwarder on `192.168.200.54` (spoke image pulls) |
 | `spoke-dns-default.yaml` | Spoke Service `172.30.0.10` → that forwarder |
 | `udn-ingress-proxy.yaml` | Hub proxy + AWS NLB for 3-node API `.200` and apps `.201` |
@@ -56,10 +56,10 @@ Keepalived on the guests owns `.200` (API + MCS) and `.201` (apps / ingress). OV
 
 | VIP | Ports | Backend |
 | --- | --- | --- |
-| `192.168.200.200` | 6443 (API) and 22623 (MCS) | Same Ready masters (`API_BACKENDS`, default `.10` `.11` `.12`) |
+| `192.168.200.200` | `6443` (API), `22623` (MCS HTTPS), `22624` (MCS HTTP) | Same Ready masters (`API_BACKENDS`) |
 | `192.168.200.201` | 80, 443 | Ready masters that run the router (`INGRESS_BACKENDS`) |
 
-MCS is not a separate VIP. First-boot ignition uses `https://192.168.200.200:22623/config/master`, so **move API and MCS backends together**. Never leave `22623` on a node that is itself fetching ignition (that is what stalled host-4: LB still pointed at bootstrap `.12`).
+MCS is not a separate VIP. Day-1 masters fetch `https://192.168.200.200:22623/config/master`. Day-2 workers (Assisted `api-vip-connectivity-check`) fetch `http://192.168.200.200:22624/config/worker` — that is the `ignition-downloadable` / “pending API connectivity” check. Program **6443, 22623, and 22624** together. Never leave MCS backends on a node that is itself fetching ignition.
 
 ```bash
 API_BACKENDS='192.168.200.10 192.168.200.11 192.168.200.12' \
@@ -67,11 +67,11 @@ INGRESS_BACKENDS='192.168.200.10 192.168.200.11 192.168.200.12' \
   ./kubevirt-discovery-vms/apply-api-vip-ovn-lb.sh
 ```
 
-During bootstrap only, backends can be the bootstrap VM. As soon as the first masters serve kube-apiserver / machine-config-server, retarget both `6443` and `22623` to those masters (not the node that is rebooting into RHCOS). After host-4 is a master, include `.12` (the script default does).
+During bootstrap only, backends can be the bootstrap VM. As soon as the first masters serve kube-apiserver / machine-config-server, retarget `6443`, `22623`, and `22624` to those masters (not the node that is rebooting into RHCOS). After host-4 is a master, include `.12` (the script default does).
 
 There is no Kubernetes YAML that can own those VIP addresses. ClusterIPs come from `172.30.0.0/16`. A Service `externalIP` of `.200`/`.201` is programmed with empty backends (connection refused).
 
-If ovn-kubernetes drops the load balancers, re-run the script. AWS NLBs do not need port 22623 (overlay-only).
+If ovn-kubernetes drops the load balancers, re-run the script. AWS NLBs do not need 22623/22624 (overlay-only).
 
 Assisted `installing-pending-user-action` / “booted the installation image” is often **stale**: the discovery agent is gone after disk boot, so the UI does not update until the node registers. Check the virt-launcher serial log (`/var/run/kubevirt-private/<uid>/virt-serial0-log`) or a VGA screenshot (`virsh screenshot`) instead of re-attaching the ISO.
 
